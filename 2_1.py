@@ -46,7 +46,8 @@ class Grid(object):
         self.cells = np.array([[Cell(0, False, False, np.random.random()) for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)])
         self.iterations = []
         self.body = [self.cells[seed[0], seed[1]]]
-        self.candidates = [self.cells[seed[0]-1, seed[1]], self.cells[seed[0]+1, seed[1]], self.cells[seed[0], seed[1]-1], self.cells[seed[0], seed[1]+1]]
+        # self.candidates = [self.cells[seed[0]-1, seed[1]], self.cells[seed[0]+1, seed[1]], self.cells[seed[0], seed[1]-1], self.cells[seed[0], seed[1]+1]]
+        self.candidates = [self.cells[seed[0]-1, seed[1]], self.cells[seed[0], seed[1]-1], self.cells[seed[0], seed[1]+1]]
 
         # top row as source
         self.cells[0, :] = np.array([Cell(1, False, False, np.random.random()) for j in np.arange(self.Ncols)])
@@ -56,7 +57,7 @@ class Grid(object):
         
         # initial candidates
         self.cells[seed[0]-1, seed[1]] = Cell(0, True, False, np.random.random())
-        self.cells[seed[0]+1, seed[1]] = Cell(0, True, False, np.random.random())
+        # self.cells[seed[0]+1, seed[1]] = Cell(0, True, False, np.random.random())
         self.cells[seed[0], seed[1]-1] = Cell(0, True, False, np.random.random())
         self.cells[seed[0], seed[1]+1] = Cell(0, True, False, np.random.random())
 
@@ -107,14 +108,15 @@ class Grid(object):
                     n_neighbours = len([neighbour for neighbour in neighbours if not neighbour.body])
                     
                     # SOR method
-                    self.cells[i, j].C = self.w/n_neighbours * (old_C[i+1, j] + old_C[i, (j+1)%self.Ncols] + self.cells[i, j-1].C + self.cells[i-1, j].C) + (1-self.w) * old_C[i, j]
+                    if n_neighbours > 0:
+                        self.cells[i, j].C = self.w/n_neighbours * (old_C[i+1, j] + old_C[i, (j+1)%self.Ncols] + self.cells[i, j-1].C + self.cells[i-1, j].C) + (1-self.w) * old_C[i, j]
                     
                     # keep concentrations bounded
                     if self.cells[i, j].C < 0: self.cells[i, j].C = 0
                     elif self.cells[i, j].C > 1: self.cells[i, j].C = 1
 
         self.iterations += [n_iter]
-        print(n_iter)
+        # print(n_iter)
 
 
     def get_neighbours(self, i, j):
@@ -142,7 +144,7 @@ class Grid(object):
                     self.cells[i, (j+1) % self.Ncols].candidate = True
 
 
-    def P_growth(self):
+    def set_P_growth(self):
         '''
         determines growth probability for all candidates
         '''
@@ -174,7 +176,7 @@ class Grid(object):
             self.update_candidates()
 
             # determine growth probabilities for all candidates
-            self.P_growth()
+            self.set_P_growth()
 
             # pick a candidate with the growth probability as weight
             p = np.array([self.cells[i, j].P_growth for i in range(self.Nrows) for j in range(self.Ncols)])
@@ -185,17 +187,23 @@ class Grid(object):
             obj_coords = np.where(self.cells == new_object)
 
             # add choosen candidate to the body and remove from candidates
-            self.cells[obj_coords[0], obj_coords[1]] = Cell(0, False, True, np.random.random())
+            added_cell = Cell(0, False, True, np.random.random())
+            self.cells[obj_coords[0], obj_coords[1]] = added_cell
+            self.body += [added_cell]
 
             time_grid += [[[self.cells[i, j].C for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)]]
+
+            if k%10==0:
+                print('iteration ', k)
         
         return np.array(time_grid), self.iterations
 
 if __name__ == '__main__':
 
     steps = 100
-    size = (20, 20)
-    seed = (-3, 3)
+    size = (100, 100)
+    # seed = (-3, 3)
+    seed = (size[1]-1, int(size[1]/2))
     w = 1.85
     eta = 1.5
     epsilon = 1e-3
