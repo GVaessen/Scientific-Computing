@@ -2,13 +2,14 @@ import numpy as np
 import matplotlib.pyplot as plt
 import copy
 from matplotlib import animation
+import pandas as pd
 
 class Cell(object):
     '''
     Single cell that can be part of a larger grid
     '''
 
-    def __init__(self, C, candidate, body, id):
+    def __init__(self, C, candidate, in_body, id, loc):
         '''
         Args:
             C:         float in [0, 1], concentration of cell
@@ -18,9 +19,10 @@ class Cell(object):
         '''
         self.C = C
         self.candidate = candidate
-        self.body = body
+        self.in_body = in_body
         self.id = id
         self.P_growth = 0
+        self.loc = loc
 
 class Grid(object):
     '''
@@ -43,23 +45,26 @@ class Grid(object):
         self.eta = eta
         self.steps = steps
         self.epsilon = epsilon
-        self.cells = np.array([[Cell(0, False, False, np.random.random()) for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)])
+        self.cells = np.array([[Cell(0, False, False, np.random.random(), (i,j)) for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)])
         self.iterations = []
         self.body = [self.cells[seed[0], seed[1]]]
+
         # self.candidates = [self.cells[seed[0]-1, seed[1]], self.cells[seed[0]+1, seed[1]], self.cells[seed[0], seed[1]-1], self.cells[seed[0], seed[1]+1]]
         self.candidates = [self.cells[seed[0]-1, seed[1]], self.cells[seed[0], seed[1]-1], self.cells[seed[0], seed[1]+1]]
 
         # top row as source
-        self.cells[0, :] = np.array([Cell(1, False, False, np.random.random()) for j in np.arange(self.Ncols)])
+        self.cells[0, :] = np.array([Cell(1, False, False, np.random.random(), (0,j)) for j in np.arange(self.Ncols)])
         
         # initial body
-        self.cells[seed[0], seed[1]] = Cell(0, False, True, np.random.random())
+        self.cells[seed[0], seed[1]] = Cell(0, False, True, np.random.random(), (seed[0], seed[1]))
         
         # initial candidates
-        self.cells[seed[0]-1, seed[1]] = Cell(0, True, False, np.random.random())
+        self.cells[seed[0]-1, seed[1]] = Cell(0, True, False, np.random.random(), (seed[0]-1, seed[1]))
         # self.cells[seed[0]+1, seed[1]] = Cell(0, True, False, np.random.random())
-        self.cells[seed[0], seed[1]-1] = Cell(0, True, False, np.random.random())
-        self.cells[seed[0], seed[1]+1] = Cell(0, True, False, np.random.random())
+        self.cells[seed[0], seed[1]-1] = Cell(0, True, False, np.random.random(), (seed[0], seed[1]-1))
+        self.cells[seed[0], seed[1]+1] = Cell(0, True, False, np.random.random(), (seed[0], seed[1]+1))
+
+        self.concentrations = self.cells_C()
 
 
     def cells_C(self):
@@ -88,32 +93,46 @@ class Grid(object):
         n_iter = 0        
         old_C = np.ones((self.Nrows, self.Ncols))
 
-        while np.amax(np.abs(self.cells_C() - old_C)) > self.epsilon:
+        # self.concentrations = self.cells_C()
+
+        # while np.amax(np.abs(self.cells_C() - old_C)) > self.epsilon:
+        while np.amax(np.abs(self.concentrations - old_C)) > self.epsilon:
+            # print('yeet', np.amax(np.abs(self.concentrations - old_C)))
 
             n_iter += 1
-            old_C = copy.deepcopy(self.cells_C())
+
+            # old_C = copy.deepcopy(self.cells_C())
+            # old_C = self.concentrations.copy()
+            old_C = self.concentrations[:]
 
             full_copy = copy.deepcopy(self.cells)
+
+            new_C = np.ones((self.Nrows, self.Ncols))
 
             for i in np.arange(1, self.Nrows-1):
                 for j in np.arange(self.Ncols):
 
-                    if self.cells[i, j].body:
+                    if self.cells[i, j].in_body:
                         continue
                     
                     # # GS method
                     # self.cells[i, j].C = 0.25 * (old_C[i+1, j] + self.cells[i-1, j].C + old_C[i, (j+1)%self.Ncols] + self.cells[i, j-1].C)
                     
                     neighbours = [self.cells[i-1, j], self.cells[i, j-1], full_copy[i+1, j], full_copy[i, (j+1)%self.Ncols]]
-                    n_neighbours = len([neighbour for neighbour in neighbours if not neighbour.body])
+                    n_neighbours = len([neighbour for neighbour in neighbours if not neighbour.in_body])
                     
                     # SOR method
                     if n_neighbours > 0:
-                        self.cells[i, j].C = self.w/n_neighbours * (old_C[i+1, j] + old_C[i, (j+1)%self.Ncols] + self.cells[i, j-1].C + self.cells[i-1, j].C) + (1-self.w) * old_C[i, j]
-                    
+                        self.cells[i, j].C = self.w/n_neighbours * (self.cells[i+1, j].C + self.cells[i, (j+1)%self.Ncols].C 
+                                                                    + self.cells[i, j-1].C + self.cells[i-1, j].C) + (1-self.w) * self.cells[i, j].C
+
                     # keep concentrations bounded
                     if self.cells[i, j].C < 0: self.cells[i, j].C = 0
                     elif self.cells[i, j].C > 1: self.cells[i, j].C = 1
+
+                    new_C[i, j] = self.cells[i, j].C
+
+            self.concentrations = new_C
 
         self.iterations += [n_iter]
         # print(n_iter)
@@ -131,17 +150,42 @@ class Grid(object):
         '''
         returns a list of all candidates of in the grid
         '''
-        for i in np.arange(1, self.Nrows-1):
-            for j in np.arange(self.Ncols):
-                if self.cells[i, j].body:
+        # for i in np.arange(1, self.Nrows-1):
+        #     for j in np.arange(self.Ncols):
+        #         if self.cells[i, j].body:
 
-                    # source and sinks can't become part of the body
-                    if i != 1:
-                        self.cells[i-1, j].candidate = True
-                    if i != self.Nrows - 2:
-                        self.cells[i+1, j].candidate = True
-                    self.cells[i, j-1].candidate = True
-                    self.cells[i, (j+1) % self.Ncols].candidate = True
+        # print(self.body)
+
+        for bodycell in self.body:
+
+            # print(bodycell)
+
+            i = bodycell.loc[0]
+            j = bodycell.loc[1]
+
+            # print('first ', len(self.candidates))
+
+            # source and sinks can't become part of the body
+            if i != 1:
+                if self.cells[i-1, j] not in self.candidates + self.body:
+                    self.cells[i-1, j].candidate = True
+                    self.candidates += [self.cells[i-1, j]]
+                
+            if i != self.Nrows-1:
+                if self.cells[i+1, j] not in self.candidates + self.body:
+                    self.cells[i+1, j].candidate = True
+                    self.candidates += [self.cells[i+1, j]]
+
+            if self.cells[i, j-1] not in self.candidates + self.body:
+                self.cells[i, j-1].candidate = True
+                self.candidates += [self.cells[i, j-1]]
+
+            if self.cells[i, (j+1) % self.Ncols] not in self.candidates + self.body:
+                self.cells[i, (j+1) % self.Ncols].candidate = True
+                self.candidates += [self.cells[i, (j+1) % self.Ncols]]
+
+            # print('after ', len(self.candidates))
+            
 
 
     def set_P_growth(self):
@@ -150,14 +194,21 @@ class Grid(object):
         '''
 
         # concentration all candidates
-        total = np.sum([self.cells[i, j].C ** self.eta for i in np.arange(self.Nrows) for j in np.arange(self.Ncols) if self.cells[i, j].candidate])
+        # total = np.sum([self.cells[i, j].C ** self.eta for i in np.arange(self.Nrows) for j in np.arange(self.Ncols) if self.cells[i, j].candidate])
+        total = np.sum([candidate.C**self.eta for candidate in self.candidates])
 
-        for i in np.arange(self.Nrows):
-            for j in np.arange(self.Ncols):
-                if self.cells[i, j].candidate:
-                        self.cells[i, j].P_growth = self.cells[i, j].C ** self.eta / total
-                else:
-                    self.cells[i, j].P_growth = 0 
+        # for i in np.arange(self.Nrows):
+        #     for j in np.arange(self.Ncols):
+        #       if self.cells[i, j].candidate:
+
+        for candidate in self.candidates:
+            i = candidate.loc[0]
+            j = candidate.loc[1]
+
+            self.cells[i, j].P_growth = (self.cells[i, j].C ** self.eta) / total
+
+        # else:
+        #     self.cells[i, j].P_growth = 0 
                            
 
     def DLA(self):
@@ -171,7 +222,9 @@ class Grid(object):
         for k in range(self.steps):
 
             # calculate the diffusion over the next time step
+            # print('yeet')
             self.SOR()
+            # print('yoot')
         
             self.update_candidates()
 
@@ -179,57 +232,172 @@ class Grid(object):
             self.set_P_growth()
 
             # pick a candidate with the growth probability as weight
-            p = np.array([self.cells[i, j].P_growth for i in range(self.Nrows) for j in range(self.Ncols)])
+            # p = np.array([self.cells[i, j].P_growth for i in range(self.Nrows) for j in range(self.Ncols)])
+            p = np.array([candidate.P_growth for candidate in self.candidates])
 
-            new_object = np.random.choice(self.cells.ravel(), p=p)
+            # new_object = np.random.choice(self.cells.ravel(), p=p)
+            new_object = np.random.choice(self.candidates, p=p)
 
             # coordinates new object
             obj_coords = np.where(self.cells == new_object)
 
             # add choosen candidate to the body and remove from candidates
-            added_cell = Cell(0, False, True, np.random.random())
-            self.cells[obj_coords[0], obj_coords[1]] = added_cell
-            self.body += [added_cell]
+            # added_cell = Cell(0, False, True, np.random.random())
+            # self.cells[obj_coords[0], obj_coords[1]] = added_cell
+            # self.body += [added_cell]
+            # print(self.cells[obj_coords[0], obj_coords[1]])
+            self.cells[obj_coords[0], obj_coords[1]][0].in_body = True
+            self.cells[obj_coords[0], obj_coords[1]][0].candidate = False
+            self.cells[obj_coords[0], obj_coords[1]][0].C = 0
+            self.concentrations[obj_coords[0], obj_coords[1]] = 0
 
-            time_grid += [[[self.cells[i, j].C for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)]]
+            # print(self.body)
+            self.body += [self.cells[obj_coords[0], obj_coords[1]][0]]
+            self.candidates.remove(self.cells[obj_coords[0], obj_coords[1]][0])
 
-            if k%10==0:
-                print('iteration ', k)
+            # time_grid += [[[self.cells[i, j].C for j in np.arange(self.Ncols)] for i in np.arange(self.Nrows)]]
+            for bodycell in self.body:
+                self.concentrations[bodycell.loc[0], bodycell.loc[1]] = 0
+            self.concentrations[self.Nrows-1,:] = 0
+            time_grid += [self.concentrations]
+
+            if k%100==0:
+                print('eta ',self.eta,', iteration ', k)
         
         return np.array(time_grid), self.iterations
 
+def plot_DLA():
+
+    fig, [[ax1, ax2, ax3], [ax4, ax5, ax6]] = plt.subplots( 2,3, figsize=(9,6))
+
+    df = pd.read_csv('DLA_3.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+            data += [df[i][1:]]
+
+    ax1.imshow(np.array(data))
+    ax1.set_title('$\eta=3$')
+    ax1.axis('off')
+
+    df = pd.read_csv('DLA_2.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+            data += [df[i][1:]]
+
+    ax2.imshow(np.array(data))
+    ax2.set_title('$\eta=2$')
+    ax2.axis('off')
+    
+    
+    df = pd.read_csv('DLA_1.5.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+            data += [df[i][1:]]
+
+    ax3.imshow(np.array(data))
+    ax3.set_title('$\eta=1.5$')
+    ax3.axis('off')
+
+    df = pd.read_csv('DLA_1.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+        data += [df[i][1:]]
+
+    ax4.imshow(np.array(data))
+    ax4.set_title('$\eta=1$')
+    ax4.axis('off')
+
+    df = pd.read_csv('DLA_0.5.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+        data += [df[i][1:]]
+
+    ax5.imshow(np.array(data))
+    ax5.set_title('$\eta=0.5$')
+    ax5.axis('off')
+
+    df = pd.read_csv('DLA_0.1.csv').to_numpy()
+
+    data = []
+    for i in range(1,100):
+            data += [df[i][1:]]
+
+    ax6.imshow(np.array(data))
+    ax6.set_title('$\eta=0.1$')
+    ax6.axis('off')
+
+    plt.tight_layout()
+    plt.savefig('DLA_eta_comp_6.pdf' , bbox_inches='tight')
+    plt.show()
+
 if __name__ == '__main__':
 
-    steps = 100
+    steps = 1000
     size = (100, 100)
-    # seed = (-3, 3)
     seed = (size[1]-1, int(size[1]/2))
     w = 1.85
     eta = 1.5
     epsilon = 1e-3
 
+    # model = Grid(size, w, eta, seed, steps, epsilon)
+    # grid, iters = model.DLA()
+
+    # fig, ax = plt.subplots()
+    
+    # im = ax.imshow(grid[0])
+
+    # def animate(i):
+    #     i -= 1
+    #     im.set_array(grid[i])  # update the data
+    #     return [im]
+
+
+    # # Init only required for blitting to give a clean slate.
+    # def init():
+    #     im.set_data(grid[0])
+    #     return [im]
+
+    # ani = animation.FuncAnimation(fig, animate, init_func=init,
+    #                             interval=25, blit=True)
+
+
+    # # writergif = animation.PillowWriter(fps=60, bitrate=-1) 
+    # # ani.save('diffeq.gif', writer=writergif)
+    # plt.show()
+
+    # eta = 0.1
+    # model = Grid(size, w, eta, seed, steps, epsilon)
+    # grid, iters = model.DLA()
+
+    # df = pd.DataFrame(grid[-1])
+    # df.to_csv('DLA_0.1.csv')
+
+    # eta = 1
+    # model = Grid(size, w, eta, seed, steps, epsilon)
+    # grid, iters = model.DLA()
+
+    # df = pd.DataFrame(grid[-1])
+    # df.to_csv('DLA_1.csv')
+
+    eta = 2
     model = Grid(size, w, eta, seed, steps, epsilon)
     grid, iters = model.DLA()
 
-    fig, ax = plt.subplots()
+    df = pd.DataFrame(grid[-1])
+    df.to_csv('DLA_2.csv')
+
+    eta = 3
+    model = Grid(size, w, eta, seed, steps, epsilon)
+    grid, iters = model.DLA()
+
+    df = pd.DataFrame(grid[-1])
+    df.to_csv('DLA_3.csv')
     
-    im = ax.imshow(grid[0])
 
-    def animate(i):
-        i -= 1
-        im.set_array(grid[i])  # update the data
-        return [im]
+    plot_DLA()
 
-
-    # Init only required for blitting to give a clean slate.
-    def init():
-        im.set_data(grid[0])
-        return [im]
-
-    ani = animation.FuncAnimation(fig, animate, init_func=init,
-                                interval=25, blit=True)
-
-
-    # writergif = animation.PillowWriter(fps=60, bitrate=-1) 
-    # ani.save('diffeq.gif', writer=writergif)
-    plt.show()
