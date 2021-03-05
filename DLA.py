@@ -94,24 +94,39 @@ class Grid(object):
         solve the diffusion equation directly instead of iteratively using matrix shifts, matrix must be diagonal
         '''
 
-        old_C = np.ones((self.Nrows, self.Ncols))
+        old_C = np.ones((self.Nrows+2, self.Ncols+2))
 
-        while np.amax(np.abs(self.concentrations - old_C)) > self.epsilon:
+        while np.amax(np.abs(self.concentrations - old_C[1:-1, 1:-1])) > self.epsilon:
 
-            old_C = self.concentrations.copy()
+            old_C = np.zeros((self.Nrows+2, self.Ncols+2))
+
+            # set periodic boundaries for the columns
+            old_C[1:-1, -1] = self.concentrations[:, 0]
+            old_C[1:-1, 0] = self.concentrations[:, -1]
+            
+            # after a border of 1 copy old concentrations
+            old_C[1:-1, 1:-1] = self.concentrations
+
+            # use a double source and sink to keep the grid square
+            old_C[0] = np.ones(self.Ncols+2)
+            old_C[-1] = np.zeros(self.Ncols+2)
 
             # construct L and U with 1's next to diagonals
-            L = diags(np.ones(self.Nrows-1), offsets=-1).toarray()
-            U = diags(np.ones(self.Nrows-1), offsets=1).toarray()
- 
-            new_C = 0.25 * (L @ self.concentrations + self.concentrations @ L + U @ self.concentrations + self.concentrations @ U)
+            L = diags(np.ones(len(old_C)-1), offsets=-1)
+            U = diags(np.ones(len(old_C)-1), offsets=1)
+
+            # direct Jacobi method
+            new_C = 0.25 * (L @ old_C + old_C @ L + U @ old_C + old_C @ U)
             
             # implement boundary conditions
-            new_C[0] = np.ones(self.Ncols)
-            new_C[-1] = np.zeros(self.Ncols)
-            
-            self.concentrations = new_C
+            new_C[0] = np.ones(self.Ncols+2)
+            new_C[-1] = np.zeros(self.Ncols+2)
 
+            # update concentrations, sink and source stay constant
+            self.concentrations = new_C[1:-1, 1:-1]
+            self.concentrations[0] = np.ones(self.Ncols)
+            self.concentrations[-1] = np.zeros(self.Ncols)
+            
         
     def SOR(self):
         '''
@@ -201,15 +216,21 @@ class Grid(object):
         '''
         determines growth probability for all candidates
         '''
+    	
+        # update concentrations
+        for i in np.arange(self.Nrows):
+            for j in np.arange(self.Ncols):
+                self.cells[i, j].C = self.concentrations[i, j]
 
-        # concentration all candidates
-        total = np.sum([candidate.C**self.eta for candidate in self.candidates])
+        # concentration all candidates, 0^0 is treated as 0
+        total = np.sum([candidate.C**self.eta for candidate in self.candidates if candidate.C > 0])
 
         for candidate in self.candidates:
             i = candidate.loc[0]
             j = candidate.loc[1]
 
-            self.cells[i, j].P_growth = (self.cells[i, j].C ** self.eta) / total
+            if candidate.C > 0:
+                self.cells[i, j].P_growth = (self.cells[i, j].C**self.eta) / total
                            
 
     def DLA(self):
@@ -261,8 +282,8 @@ class Grid(object):
             self.concentrations[-1,:] = 0
             time_grid += [self.concentrations]
 
-            if k%100==0:
-                print('eta ',self.eta,', iteration ', k)
+            # if k%self.steps==0:
+            #     print('eta ',self.eta,', iteration ', k)
         
         return np.array(time_grid), self.iterations
 
@@ -337,11 +358,11 @@ def plot_DLA():
 
 if __name__ == '__main__':
 
-    steps = 100
-    size = (100, 100)
+    steps = 200
+    size = (50, 50)
     seed = (size[1]-1, int(size[1]/2))
-    w = 1.85
-    eta = 1.5
+    w = 1.7
+    eta = 2
     epsilon = 1e-3
     method = 'shifts'
 
@@ -363,12 +384,13 @@ if __name__ == '__main__':
         im.set_data(grid[0])
         return [im]
 
-    ani = animation.FuncAnimation(fig, animate, init_func=init,
-                                interval=25, blit=True)
+    # ani = animation.FuncAnimation(fig, animate, init_func=init,
+    #                             interval=25, blit=True)
 
 
     # writergif = animation.PillowWriter(fps=60, bitrate=-1) 
     # ani.save('diffeq.gif', writer=writergif)
+    plt.savefig('direct_shape.pdf', bbox_inches='tight')
     plt.show()
 
     # plot_DLA()
